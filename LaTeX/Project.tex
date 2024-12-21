@@ -133,6 +133,18 @@
     frame=single                        % Add a frame around MongoDB blocks
 }
 
+\lstdefinelanguage{Cypher}{
+    keywords={MATCH, RETURN, CREATE, DELETE, SET, WHERE, AND, OR, NOT, AS, LOAD, CSV, WITH, HEADERS, FROM, MERGE, ORDER, BY, ASC, LIMIT, DESC, UNION},
+    sensitive=true,
+    keywordstyle=\color{teal}\bfseries,
+    comment=[l]{//},
+    morecomment=[s]{/*}{*/},
+    commentstyle=\color{gray}\itshape,
+    string=[b]",
+    stringstyle=\color{orange},
+    morestring=[b]',
+}
+
 
 % Input of configuration file. Do not change config.tex file unless you really know what you are doing. 
 \input{Configuration_Files/config}
@@ -1234,6 +1246,299 @@ As we can see on google maps the richest area actually correspond to one of the 
     \label{fig:enter-label}
 \end{figure}
 
+\chapter{Neo4j}
+
+\section{Dataset Description}
+The original dataset comes from \href{https://github.com/neo4j-partners/neo4j-transport-for-london/tree/main}{this github page} and the \href{https://data.london.gov.uk/dataset/tfl-bus-stop-locations-and-routes}{London Datastore website}. The data was provided in cvs, with some cypher scripts to load only a small sample of the data corresponding to the metro lines, we then had to clean the bus network data and write our own scripts for it.
+This data represents the London transport network from 2010, it is composed of stations, bus stops and the connections between them. The structure is a graph with:
+\begin{itemize}
+    \item \textbf{Nodes}: Representing metro/train stations and bus stops.
+    \item \textbf{Relationships}: Representing connections between these nodes based on transport lines and bus routes.
+\end{itemize}
+
+\subsection*{Nodes}
+\subsubsection*{Stations}
+\begin{itemize}
+    \item Represents metro/train stations.
+    \item Key properties:
+          \begin{itemize}
+              \item \textbf{zone}: Fare zone of the station (a number between 1 and 3).
+              \item \textbf{latitude, longitude}: Geographic coordinates.
+              \item \textbf{name}: Name of the station.
+          \end{itemize}
+\end{itemize}
+
+\subsubsection*{Bus Stops}
+\begin{itemize}
+    \item Represents bus stops in the transport network.
+    \item Key properties:
+          \begin{itemize}
+              \item \textbf{bus\_stop\_code}: Unique identifier for the stop.
+              \item \textbf{latitude, longitude}: Geographic coordinates.
+              \item \textbf{name}: Name of the bus stop.
+              \item \textbf{stop\_area}: Area identifier grouping related stops.
+              \item \textbf{stop\_Code\_LBSL}: Unique code assigned to the stop by London Bus Services Limited.
+              \item \textbf{naptan\_ATCO\_code}: Association of Transport Coordinating Officers code according to the UK’s National Public Transport Access Nodes system.
+              \item \textbf{virtual\_stop}: Indicates if the stop is virtual (1 for virtual, 0 for physical).
+          \end{itemize}
+\end{itemize}
+
+\subsection*{Relationships}
+\subsubsection*{\textbf{CONNECTED\_BY}}
+\begin{itemize}
+    \item Connects two \textbf{Station} nodes.
+    \item Key property:
+          \begin{itemize}
+              \item \textbf{line}: The transport line (e.g.``TFL RAIL") connecting the stations.
+          \end{itemize}
+\end{itemize}
+
+\subsubsection*{\textbf{NEXT\_STOP}}
+\begin{itemize}
+    \item Connects two \texttt{BusStop} nodes.
+    \item Key properties:
+          \begin{itemize}
+              \item \textbf{route}: The bus route number.
+              \item \textbf{heading}: Directional information for the route.
+              \item \textbf{run}: A number that indicates different variations of the route.
+              \item \textbf{virtual}: Specifies if the connection involves a virtual stop.
+          \end{itemize}
+\end{itemize}
+
+\section*{Key Characteristics}
+\begin{itemize}
+    \item The dataset is geospatially aware, with \textbf{latitude} and \textbf{longitude} available for each node, enabling geographic computations such as distances and nearest neighbors..
+    \item Metro stations and bus stops are \textbf{not directly connected} in the graph, as they represent distinct transport layers.
+\end{itemize}
+\subsection{Data Injection}
+we used this python script to add a next stop column in the ``london\_transport\_datasets\_routes.csv" we uploaded the processed dataset in the ``london\_transport\_datasets\_routes\_processed.csv" file, this is used later to create the NEXT\_STOP relation in neo4j.
+
+\begin{lstlisting}[language = Python]
+    import pandas as pd
+df = pd.read_csv('london_transport_datasets_routes.csv')
+
+# Sort the values
+df = df.sort_values(by=['Route', 'Run', 'Sequence'])
+
+# Add a colon for the next stop
+df['Next_Stop_Code_LBSL'] = df.groupby(['Route', 'Run'])['Stop_Code_LBSL'].shift(-1)
+
+df.to_csv('london_transport_datasets_routes_processed.csv', index=False)   
+\end{lstlisting}]
+
+The ``london\_transport\_datasets\_routes\_processed.csv" file was still quite big so we decided to split it in multiple csv files. This allowed us to import the dataset in smaller steps, in this specific use case we decided to split it in 6 files composed of 10.000 lines each.
+
+\subsection{Neo4j Dataset Upload}
+
+
+In this section it is reported the list of Cypher commands used to extract data from
+CSVs and import it into Neo4j. \textbf{For quicker installation, we highly recommend using the database dump that we have provided instead}.\\
+
+This command loads the nodes that represent the Metro Stations
+\begin{lstlisting}[language=Cypher]
+LOAD CSV WITH HEADERS FROM "file:///london_transport_datasets_London_stations.csv"
+AS row
+MERGE (s:Station {latitude:toFloat(row.Latitude), longitude:toFloat(row.Longitude), name:row.Station, zone:row.Zone})
+\end{lstlisting}
+
+This command connects the stations and labels the connections according to transit lines they represent.
+
+\begin{lstlisting}[language=Cypher]
+LOAD CSV WITH HEADERS FROM "file:///london_transport_datasets_London_tube_lines.csv" AS row
+MATCH (a:Station {name: row.From_Station}), (b:Station {name: row.To_Station})
+MERGE (a)-[rel1:CONNECTED_BY {line: toUpper(row.Tube_Line)}]->(b)
+MERGE (b)-[rel2:CONNECTED_BY {line: toUpper(row.Tube_Line)}]->(a)
+RETURN rel1, rel2;
+\end{lstlisting}
+
+This command loads the nodes that represent the Bus Stops. We found 31 virtual stop with some null values, we decided to replace these values with ``Unknown".
+
+\begin{lstlisting}[language=Cypher]
+LOAD CSV WITH HEADERS FROM "file:///london_transport_datasets_stops.csv" AS row
+MERGE (s:BusStop {
+    stop_Code_LBSL: coalesce(row.Stop_Code_LBSL, 'Unknown'),
+    bus_stop_code: coalesce(row.Bus_Stop_Code, 'Unknown'),
+    naptan_ATCO_code: coalesce(row.Naptan_Atco, 'Unknown'),
+    name: coalesce(row.Stop_Name, 'Unknown'),
+    stop_area: coalesce(row.Stop_Area, 'Unknown'),
+    virtual_stop: coalesce(row.Virtual_Bus_Stop, 'Unknown'),
+    latitude: coalesce(toFloat(row.Latitude), 0.0),
+    longitude: coalesce(toFloat(row.Longitude), 0.0)
+})
+\end{lstlisting}
+
+This command connects the bus stops and labels the connections according to bus lines they represent. Some heading values were null, we decided to replace these values with ``Unknown".\\
+The ``london\_transport\_datasets\_routes\_processed.csv" file is quite big, the following query loads the whole csv file, you can replace ``file:///london\_transport\_datasets\_routes\_processed.csv" with ``file:///london\_transport\_datasets\_routes\_processed\_part1.csv" and repeat the query for each file from part1 to part6.
+
+\begin{lstlisting}[language=Cypher]
+LOAD CSV WITH HEADERS FROM "file:///london_transport_datasets_routes_processed.csv" AS row
+MATCH (start:BusStop {stop_Code_LBSL: row.Stop_Code_LBSL})
+MATCH (end:BusStop {stop_Code_LBSL: row.Next_Stop_Code_LBSL})
+MERGE (start)-[rel:NEXT_STOP]->(end)
+ON CREATE SET
+    rel.route = row.Route,
+    rel.run = row.Run,
+    rel.heading = COALESCE(row.Heading, "Unknown"),
+    rel.virtual = row.Virtual_Bus_Stop;
+\end{lstlisting}
+
+\section{Queries}
+\subsection{Queries for Generating Paths}
+Let us start with some queries that allow us to visualise the data like in figure below.\\
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=1\linewidth]{metropolitan-line-2024.png}
+    \caption{Metropolitan line}
+\end{figure}
+\\The first one that comes to mind is a query that allows us to see all the stations in a train line.
+We can do this with this simple match that searches all the nodes connected to a line. This is a very simple query but probably one of the most useful ones so we decided to include it anyway:\\
+\begin{lstlisting}[language=Cypher]
+MATCH (start:Station)-[:CONNECTED_BY {line: "METROPOLITAN"}]-(end:Station)
+RETURN DISTINCT start.name
+\end{lstlisting}
+
+This is the same query but for the bus network: \\
+\begin{lstlisting}[language=Cypher]
+MATCH (start:BusStop)-[:NEXT_STOP {route: "154"}]-(end:BusStop)
+RETURN DISTINCT start.name AS BusStop
+\end{lstlisting}
+
+If we want to visualise the nodes in Neo4j Browser, we can simply replace "DISTINCT start.name" with start.\\
+
+If we can't visualize the graph generated from Neo4j Broweser it can be hard to understand the available paths. The following query is a variation of the previous query that returns all the paths from the terminal stations.\\
+This is done by filtering the start and end nodes by the number of connection and by eliminating all the paths where a node appears more than one time. The query returns the path only in one direction (from A to B and not from B to A, where A has a lower id number):
+
+\begin{lstlisting}[language=Cypher]
+MATCH path = (start:Station)-[:CONNECTED_BY* {line: "METROPOLITAN"}]->(end:Station)
+WHERE size([(start)-[:CONNECTED_BY {line: "METROPOLITAN"}]-() | 1]) = 2
+  AND size([(end)-[:CONNECTED_BY {line: "METROPOLITAN"}]-() | 1]) = 2
+  AND ALL(n IN nodes(path) WHERE SINGLE(x IN nodes(path) WHERE x = n))
+  AND id(start) < id(end)
+RETURN 
+  [node IN nodes(path) | node.name] AS Route,
+  length(path) AS RouteLength
+ORDER BY RouteLength DESC
+\end{lstlisting}
+
+Another useful feature is the ability to search for the reachable stations or bus stops from a specific position.
+The following querys returns all the stations or bus stops reachable in 3 steps. In this specific case it returns all the station names and path length from the ``Stratford" station :
+
+\begin{lstlisting}[language=Cypher]
+MATCH path = (start:Station {name: "Stratford"})-[:CONNECTED_BY*..3]-(reachable)
+RETURN DISTINCT 
+  reachable.name AS ReachableNode,
+  length(path) AS PathLength
+ORDER BY PathLength ASC
+\end{lstlisting}
+
+This is the same query but with the bus stops:
+
+\begin{lstlisting}[language=Cypher]
+MATCH path=(start:BusStop {name: "WHITGIFT CENTRE"})-[:NEXT_STOP*..3]-(reachable)
+RETURN DISTINCT 
+  reachable.name AS ReachableNode,
+  length(path) AS PathLength
+ORDER BY PathLength ASC
+\end{lstlisting}
+
+The following query allows us to see how connected are all the stations, it returns the number of lines that are connected to each station and orders them in descending order. This data can be a bit deceiving because "King's Cross St Pancras" is ranked only fifth in the ranking, this station is the one with the most underground lines and someone might argue that underground lines are better that normal train lines for everyday activities.
+
+\begin{lstlisting}[language=Cypher]
+MATCH (s:Station)-[r:CONNECTED_BY]->()
+WITH s, count(DISTINCT r.line) AS num_lines
+WHERE num_lines > 1
+RETURN s.name AS Station, num_lines AS NumberOfLines
+ORDER BY num_lines DESC
+\end{lstlisting}
+
+All the queries that we just saw analyze the bus and train networks by themselves. It can be useful to see the closest train station to a specific bus stop. We can do it in this way by filtering the nodes using the latitude and longitude:
+
+\begin{lstlisting}[language=Cypher]
+MATCH (bus:BusStop {name: "WHITGIFT CENTRE"}), (station:Station)
+WITH bus, station,
+  point({latitude: bus.latitude, longitude: bus.longitude}) AS busPoint,
+  point({latitude: station.latitude, longitude: station.longitude}) AS stationPoint
+RETURN bus.name AS BusStop, 
+       station.name AS NearestStation,
+       point.distance(busPoint, stationPoint) AS Distance
+ORDER BY Distance ASC
+LIMIT 5
+\end{lstlisting}
+
+A variation of this query is this one that finds the 10 bus stops and stations that are closest to each others:
+
+\begin{lstlisting}[language=Cypher]
+MATCH (bus:BusStop), (station:Station)
+WITH bus, station,
+  point({latitude: bus.latitude, longitude: bus.longitude}) AS busPoint,
+  point({latitude: station.latitude, longitude: station.longitude}) AS stationPoint
+RETURN bus.name AS BusStop, station.name AS NearestStation,
+  point.distance(busPoint, stationPoint) AS Distance
+ORDER BY Distance ASC
+LIMIT 10 
+\end{lstlisting}
+
+\subsection{Other queries}
+
+These queries are interesting mainly for statistical purposes and they are here to quantify the informations in the dataset.\\
+
+This query returns the number of stations, bus stops and the average station and stop connections:
+\begin{lstlisting}[language=Cypher]
+MATCH (bus:BusStop)
+WITH count(bus) AS NumberOfBusStops, avg(COUNT { (bus)-[:NEXT_STOP]->() }) AS AvgBusStopConnections
+
+MATCH (station:Station)
+WITH NumberOfBusStops, AvgBusStopConnections, count(station) AS NumberOfStations, avg(COUNT { (station)-[:CONNECTED_BY]->() }) AS AvgStationConnections
+
+RETURN NumberOfBusStops, NumberOfStations, AvgBusStopConnections, AvgStationConnections
+
+\end{lstlisting}
+
+
+
+This query allows us to see the number of stops for each bus or train line. the results are ordered by the number of stops in descending order:
+\begin{lstlisting}[language=Cypher]
+MATCH (station1:Station)-[r:CONNECTED_BY]->(station2:Station)
+WITH DISTINCT r.line AS Line, collect(DISTINCT station1) AS Stops
+RETURN Line AS Route, size(Stops) AS StopCount, "Tain or Metro" AS Type ORDER BY StopCount DESC
+
+UNION
+
+MATCH (busStop1:BusStop)-[r:NEXT_STOP]->(busStop2:BusStop)
+WITH DISTINCT r.route AS Route, collect(DISTINCT busStop1) AS Stops
+RETURN Route, size(Stops) AS StopCount, "Bus" AS Type ORDER BY StopCount DESC
+\end{lstlisting}
+
+This query returns the average distance between each bus stop and station:
+
+\begin{lstlisting}[language=Cypher]
+MATCH (bus:BusStop), (station:Station)
+WITH bus, station,
+  point({latitude: bus.latitude, longitude: bus.longitude}) AS busPoint,
+  point({latitude: station.latitude, longitude: station.longitude}) AS stationPoint
+WITH point.distance(busPoint, stationPoint) AS Distance
+RETURN avg(Distance) AS AverageDistance
+\end{lstlisting}
+
+This last query is here to highlight some anomalies in the dataset, in particular there is a surprising amount of bus stops (315 nodes) that are not connected to any other node, also there are 883 virtual stops (stops that do not have a physical structure to indicate them and were also probably temporary), 31 of these virtual stops have a missing name that we replaced with ``Unknown".
+
+\begin{lstlisting}[language=Cypher]
+MATCH (bus:BusStop)
+WHERE NOT (bus)-[:NEXT_STOP]->()
+RETURN count(bus) AS Count, 'UnconnectedBusStops' AS Type
+
+UNION
+
+MATCH (bus:BusStop)
+WHERE bus.virtual_stop = "1"
+RETURN count(bus) AS Count, 'VirtualBusStops' AS Type
+
+UNION
+
+MATCH (bus:BusStop)
+WHERE bus.name = "Unknown"
+RETURN count(bus) as Count, 'MissingName' AS Type
+\end{lstlisting}
 
 
 \chapter{Chapter one}
