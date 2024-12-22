@@ -1540,6 +1540,42 @@ WHERE bus.name = "Unknown"
 RETURN count(bus) as Count, 'MissingName' AS Type
 \end{lstlisting}
 
+\chapter{Extra}
+
+\section{Introduction}
+For the extra we decided to develop two Python notebooks that connected directly to the Databases previously described using the available libraries Python offered.
+
+\section{Requirements}
+There are a few simple requirements to be able to run the notebooks:
+
+\begin{itemize}
+    \item \textit{Jupyter}: Jupyter is a web application for creating and sharing computational documents. It is necessary in order to run the notebooks locally and be able to connect to the DataBases.\\
+    If you're using modern IDEs such as \textit{Pycharm} or \textit{VSCode} installing Jupyter is as simple as installing a plug-in; if that's not the case you can follow the tutorial at this \href{https://www.geeksforgeeks.org/install-jupyter-notebook-in-windows/}{\underline{link}}.
+
+    \item You need to have a running DataBase instance including the dataset that have been described in this document.\\
+    For the MongoDB part we recommend you to install \textit{\underline{\href{https://www.mongodb.com/products/tools/compass}{MongoDBCompass}}}, a graphical interface for creating and managing MongoDB DataBases.\\
+    For the Neo4j part we recommend you to install \textit{\underline{\href{https://neo4j.com/docs/desktop-manual/current/}{Neo4jDesktop}}}, a client application that helps you managing Neo4j DataBases.
+
+    \item The instances of the DataBases must be run on a known URL in order to connect to them using the notebooks. You can also run them remotely, but we recommend to run them locally for ease of use.
+
+    \item The notebooks should be able to install any Python library used in development by itself. If some errors occur, almost all the Python libraries can be installed using the \textit{pip} installation manager.
+\end{itemize}
+
+\section{The notebooks}
+
+\subsection{MongoDB}
+The MongoDB notebook consists of some statistical analysis done extracting data from the \textit{California House Pricing} Dataset used for this project.\\
+The aim of the notebook was showing interesting data through the use of graphs. Some data includes the pricing of the houses respective to its location as well as the population. Lastly the correlation of the various fields of the Dataset was explored and commented.\\\\
+All the work done and its comments can be found in the Notebook.
+
+\subsection{Neo4j}
+The Neo4j notebook aims at exploring the \textit{London Datastore} Dataset, showing a map of the buses and undergrounds of the English capital.\\
+The main focus of the notebook is of developing a path finding algorithm that builds a path that goes from one station (bus or underground) to another.\\
+The challenging part of this algorithm was taking into consideration the fact that not all stops are directly connected to one another; indeed, sometimes a path may require you to cover some distance by foot. In order to achieve this, the fields describing the coordinates of the stations have proven to be very useful, since they allowed setting a maximum distance one can cover by foot.\\
+It must be said that the algorithm is far from perfect, since it aims at finding \textit{one} path and not the best path. It can sure be improved by taking into consideration the time that it takes to travel from one stop to another using the bus or the underground, or by making it choose the path with the smallest number of changes. Although it is not perfect, it can be a starting point in developing a far more efficient and useful path finding algorithm in the London transportation network.\\\\
+All the work done and its comments can be found in the Notebook.
+
+
 % LIST OF FIGURES
 \listoffigures
 
