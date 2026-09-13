@@ -1,6 +1,6 @@
 # Systems and Methods for Big and Unstructured Data (SMBUD) - Course Project
 
-This repository contains the project developed for the Systems and Methods for Big and Unstructured Data (SMBUD) course at Politecnico di Milano during the Academic Year 2024-2025.
+This repository contains the project developed for the Systems and Methods for Big and Unstructured Data (SMBUD) course at Politecnico di Milano during the Academic Year, A.Y. 2024-2025.
 
 **Group Number**: 41  
 **Group Members**: Lorenzo Meroi, Simone Mauro, Francesco Poloni  
